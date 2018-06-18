@@ -61,6 +61,7 @@ class Partition():
         self.system_id = args.system_id
         self.use_uuid = args.use_uuid
         self.uuid = args.uuid
+        self.type = args.type
 
         self.lineno = lineno
         self.source_file = ""
