@@ -308,6 +308,10 @@ class PartitionedImage():
         self.path = path  # Path to the image file
         self.numpart = 0  # Number of allocated partitions
         self.realpart = 0 # Number of partitions in the partition table
+        self.extendpart = 0
+        self.extend_part_create = 0
+        self.extend_size_sec = 0
+        self.logical_part_cnt = 0
         self.offset = 0   # Offset of next partition (in sectors)
         self.min_size = 0 # Minimum required disk size to fit
                           # all partitions (in bytes)
@@ -394,7 +398,9 @@ class PartitionedImage():
                 # Skip one sector required for the partitioning scheme overhead
                 self.offset += overhead
 
-            if self.realpart > 3 and num_real_partitions > 4:
+            if self.realpart > 3 and num_real_partitions > 4 and self.extendpart == 0:
+                # Will create extended part here
+                self.extendpart = 4
                 # Reserve a sector for EBR for every logical partition
                 # before alignment is performed.
                 if self.ptable_format == "msdos":
@@ -425,18 +431,34 @@ class PartitionedImage():
             part.start = self.offset
             self.offset += part.size_sec
 
-            part.type = 'primary'
             if not part.no_table:
                 part.num = self.realpart
             else:
                 part.num = 0
 
             if self.ptable_format == "msdos":
+                if part.type == 'logical':
+                    self.logical_part_cnt += 1
+                    if self.extendpart == 0:
+                        #Need create a extended partition
+                        self.extendpart = self.realpart
+                        if self.ptable_format == "msdos":
+                            self.offset += 1
+                    part.num=self.realpart+1
+                    self.extend_size_sec += part.size_sec
+                    self.extend_size_sec += 1
+                    part.start += 1
+                    self.offset += 1
+                    if self.logical_part_cnt == 4:
+                        self.extend_size_sec += 24
+                        self.offset += 24
+                '''
                 # only count the partitions that are in partition table
                 if num_real_partitions > 4:
                     if self.realpart > 3:
                         part.type = 'logical'
                         part.num = self.realpart + 1
+                '''
 
             logger.debug("Assigned %s to %s%d, sectors range %d-%d size %d "
                          "sectors (%d bytes).", part.mountpoint, part.disk,
@@ -486,21 +508,28 @@ class PartitionedImage():
             if part.num == 0:
                 continue
 
-            if self.ptable_format == "msdos" and part.num == 5:
-                # Create an extended partition (note: extended
-                # partition is described in MBR and contains all
-                # logical partitions). The logical partitions save a
-                # sector for an EBR just before the start of a
-                # partition. The extended partition must start one
-                # sector before the start of the first logical
-                # partition. This way the first EBR is inside of the
-                # extended partition. Since the extended partitions
-                # starts a sector before the first logical partition,
-                # add a sector at the back, so that there is enough
-                # room for all logical partitions.
-                self._create_partition(self.path, "extended",
+            if self.ptable_format == "msdos" and self.extend_part_create == 0:
+                if part.type == 'logical':
+                    self._create_partition(self.path, "extended",
+                                       None, part.start - 1,
+                                       self.extend_size_sec)
+                    self.extend_part_create = 1
+                elif part.num == 5:
+                    # Create an extended partition (note: extended
+                    # partition is described in MBR and contains all
+                    # logical partitions). The logical partitions save a
+                    # sector for an EBR just before the start of a
+                    # partition. The extended partition must start one
+                    # sector before the start of the first logical
+                    # partition. This way the first EBR is inside of the
+                    # extended partition. Since the extended partitions
+                    # starts a sector before the first logical partition,
+                    # add a sector at the back, so that there is enough
+                    # room for all logical partitions.
+                    self._create_partition(self.path, "extended",
                                        None, part.start - 1,
                                        self.offset - part.start + 1)
+                    self.extend_part_create = 1
 
             if part.fstype == "swap":
                 parted_fs_type = "linux-swap"
